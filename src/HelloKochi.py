@@ -118,7 +118,13 @@ pipe_lr = Pipeline([
 # 5) Hyperparameter search
 # ------------------------------------------------------
 param_dist_lr = {
+    "prep__text__tfidf__min_df": [1, 2, 3, 5],                  # drop rare terms
+    "prep__text__tfidf__max_df": [0.7, 0.8, 0.9, 0.95],         # drop overly common terms
+    "prep__text__tfidf__ngram_range": [(1,1), (1,2), (1,3)],     # uni/bi/tri-grams
+    "prep__text__tfidf__max_features": [30000, 50000, 80000, 120000],
+
     "prep__text__svd__n_components": [200, 300, 500, 800],
+    
     "clf__C": loguniform(1e-4, 1e2),
     "clf__class_weight": [None, "balanced"]
 }
