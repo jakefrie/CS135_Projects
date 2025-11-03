@@ -95,6 +95,89 @@ def _pick_author_col(df):
     raise ValueError(
         "No author column found. Please add an 'author' column to x_train/x_test (or rename here)."
     )
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, precision_recall_fscore_support, accuracy_score
+
+def _build_doc_lengths(text_series, fitted_vectorizer):
+    """
+    Use the fitted CountVectorizer's analyzer so 'length' is measured
+    in the same tokenization the model actually used.
+    """
+    analyzer = fitted_vectorizer.build_analyzer()
+    return text_series.fillna("").map(lambda t: len(analyzer(t))).astype(int)
+
+def analyze_holdout(best_model, X_va_text, Y_va, x_val_df, author_col, save_path="conf_matrix_holdout.png"):
+    """
+    Plots a confusion matrix for the held-out fold and prints brief error analysis.
+    """
+    # 1) Predictions on held-out (outer validation) fold
+    y_proba = best_model.predict_proba(X_va_text)[:, 1]
+    y_pred  = (y_proba >= 0.5).astype(int)   # threshold=0.5 (state this in report)
+
+    # 2) Confusion matrix figure
+    cm = confusion_matrix(Y_va, y_pred, labels=[0,1])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["KS2-3 (0)", "KS4-5 (1)"])
+    fig, ax = plt.subplots(figsize=(6,5))
+    disp.plot(ax=ax, cmap="Blues", colorbar=False)
+    ax.set_title("Confusion Matrix (Outer Holdout, Best LR from 1C)")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    print(f"[1D] Saved confusion matrix to: {save_path}")
+
+    # 3) Summary classification stats
+    acc = accuracy_score(Y_va, y_pred)
+    prec, rec, f1, _ = precision_recall_fscore_support(Y_va, y_pred, average="binary", zero_division=0)
+    print(f"[1D] Holdout accuracy={acc:.4f}  precision={prec:.4f}  recall={rec:.4f}  F1={f1:.4f}")
+
+    # 4) Quick error characterization: by document length (quintiles)
+    vect = best_model.named_steps["bow"]
+    doc_len = _build_doc_lengths(X_va_text, vect)
+    bins = pd.qcut(doc_len, q=5, duplicates='drop')
+    by_len = pd.DataFrame({
+        "len_bin": bins.astype(str),
+        "correct": (Y_va.values == y_pred).astype(int)
+    }).groupby("len_bin")["correct"].mean().reset_index()
+    print("\n[1D] Accuracy by document length quintile (token count):")
+    for _, row in by_len.iterrows():
+        print(f"  {row['len_bin']:>24s} : acc={row['correct']:.3f}")
+
+    # 5) By author (min 5 docs to reduce noise)
+    if author_col in x_val_df.columns:
+        author_series = x_val_df[author_col].astype(str).fillna("UNK")
+        tmp = pd.DataFrame({"author": author_series, "correct": (Y_va.values == y_pred).astype(int)})
+        by_author = tmp.groupby("author").agg(n=("correct","size"), acc=("correct","mean")).reset_index()
+        by_author = by_author[by_author["n"] >= 5].sort_values("acc", ascending=False)
+        print("\n[1D] Top/Bottom authors (min 5 docs) by accuracy:")
+        if not by_author.empty:
+            head = by_author.head(5)
+            tail = by_author.tail(5)
+            print("  Top:")
+            for _, r in head.iterrows(): print(f"    {r['author'][:32]:<32}  n={int(r['n'])}  acc={r['acc']:.3f}")
+            print("  Bottom:")
+            for _, r in tail.iterrows(): print(f"    {r['author'][:32]:<32}  n={int(r['n'])}  acc={r['acc']:.3f}")
+        else:
+            print("  (No authors with >=5 held-out docs.)")
+
+    # 6) Optional: by category/genre if present (rename columns if your schema differs)
+    cand_cols = ["category", "genre", "Category", "Genre"]
+    cat_col = next((c for c in cand_cols if c in x_val_df.columns), None)
+    if cat_col is not None:
+        tmp = pd.DataFrame({cat_col: x_val_df[cat_col].astype(str).fillna("UNK"),
+                            "correct": (Y_va.values == y_pred).astype(int)})
+        by_cat = tmp.groupby(cat_col).agg(n=("correct","size"), acc=("correct","mean")).reset_index()
+        by_cat = by_cat.sort_values("acc", ascending=False)
+        print(f"\n[1D] Accuracy by {cat_col}:")
+        for _, r in by_cat.iterrows():
+            print(f"  {r[cat_col][:28]:<28}  n={int(r['n'])}  acc={r['acc']:.3f}")
+
+    # Return a dict if you want to log these results programmatically
+    return {
+        "cm": cm,
+        "acc": acc,
+        "precision": prec,
+        "recall": rec,
+        "f1": f1,
+        "acc_by_len": by_len,
+    }
 
 def create_model(x_df, y_df, x_te_df):  
     # --- 1) Extract features/labels from input DataFrames ---
@@ -131,7 +214,16 @@ def create_model(x_df, y_df, x_te_df):
     # final_model = make_pipeline()
     # final_model.set_params(**search.best_params_)
     # final_model.fit(text_series, labels_series)
-
+    author_col = _pick_author_col(x_df)  # you already computed this earlier; reuse if in scope
+    x_val_df = x_df.iloc[val_idx].reset_index(drop=True)  # the rows for the held-out fold
+    analyze_holdout(
+        best_model=best_model,
+        X_va_text=X_va,
+        Y_va=Y_va.reset_index(drop=True),
+        x_val_df=x_val_df,
+        author_col=author_col,
+        save_path="conf_matrix_holdout.png"
+    )
     # --- 5) Predict proba on the full test set and save exactly one float per line ---
     y_va_proba = best_model.predict_proba(X_va)[:, 1]
     val_auc = roc_auc_score(Y_va, y_va_proba)
