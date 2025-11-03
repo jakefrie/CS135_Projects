@@ -119,7 +119,7 @@ param_dist_lr = {
     "prep__text__tfidf__ngram_range": [(1,1), (1,2), (1,3)],
     "prep__text__tfidf__max_features": [30000, 50000, 80000, 120000],
     "prep__text__svd__n_components": [200, 300, 500, 800],
-    "clf__C": loguniform(1e-4, 1e2),
+    "clf__C": loguniform(1e-6, 1e2),
     "clf__class_weight": [None, "balanced"],
 }
 
@@ -159,8 +159,8 @@ plt.figure(figsize=(8, 5))
 plt.plot(agg["C"], agg["mean_train_auc"], marker="o", label="Train AUROC")
 plt.plot(agg["C"], agg["mean_val_auc"], marker="o", label="Validation AUROC")
 plt.xscale("log")
-plt.xlabel("Inverse Regularization (C, log scale)")
-plt.ylabel("Mean AUROC Across 5 GroupKFold Splits")
+plt.xlabel("C")
+plt.ylabel("Mean AUROC")
 plt.title("Problem 2: Logistic Regression — C vs AUROC")
 plt.legend(loc="lower right")
 plt.grid(True, linewidth=0.3, alpha=0.5)
